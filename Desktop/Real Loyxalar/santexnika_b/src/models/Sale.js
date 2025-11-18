@@ -2,51 +2,27 @@ import mongoose from "mongoose";
 
 const saleSchema = new mongoose.Schema(
   {
-    product: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: true,
-    },
-    miqdor: {
-      type: Number,
-      required: true,
-    },
-    // To‘lov turi: faqat naqd, karta, qarz
+    products: [
+      {
+        product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+        miqdor: { type: Number, required: true },
+        narxi: { type: Number, required: true },
+        discountPercent: { type: Number, default: 0 },
+        discountAmount: { type: Number, default: 0 },
+        finalPrice: { type: Number, required: true },
+      }
+    ],
     tolov_turi: {
       type: String,
       enum: ["naqd", "karta", "qarz"],
       required: true,
     },
-    narxi: {
-      type: Number,
-      required: true,
-    },
-    total: {
-      type: Number,
-      required: true,
-    },
-    qarz_miqdori: {
-      type: Number,
-      default: 0,
-    },
-    // Promo kod va chegirma
-    promoCode: {
-      type: String,
-      default: null,
-    },
-    discountPercent: {
-      type: Number,
-      default: 0,
-    },
-    discountAmount: {
-      type: Number,
-      default: 0,
-    },
-
-    // Mijoz: Client yoki DebtClient
+    total: { type: Number, required: true },
+    qarz_miqdori: { type: Number, default: 0 },
+    promoCode: { type: String, default: null },
     client: {
       type: mongoose.Schema.Types.ObjectId,
-      refPath: "clientModel", // Dinamik ref
+      refPath: "clientModel",
       default: null,
     },
     clientModel: {
@@ -55,16 +31,21 @@ const saleSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }
+  { timestamps: true, strictPopulate: false } // <-- populate xatolik bermasligi uchun
 );
 
-// Avtomatik populate: product + client
-saleSchema.pre(/^find/, function (next) {
-  this.populate("product");
+// Populate products va client
+saleSchema.pre(/^find/, function(next) {
+  this.populate({
+    path: "products.product",
+    model: "Product"
+  });
+
   this.populate({
     path: "client",
-    select: "ism tel manzil foiz promo_kod", // kerakli maydonlar
+    select: "ism tel manzil foiz promo_kod",
   });
+
   next();
 });
 
