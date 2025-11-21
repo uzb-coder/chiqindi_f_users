@@ -24,11 +24,11 @@ export const getDashboardStats = async (req, res) => {
 
     const salesData = await Sale.aggregate([
       { $match: dateFilter },
-      { $unwind: "$products" }, // Har bir mahsulotni alohida qator qilamiz
+      { $unwind: "$products" },
       {
         $group: {
           _id: "$_id",
-          saleTotal: { $sum: "$products.finalPrice" }, // Har bir sotuvning real summasi
+          saleTotal: { $sum: "$products.finalPrice" },
           tolov_turi: { $first: { $toLower: "$tolov_turi" } },
           qarz_miqdori: { $first: "$qarz_miqdori" },
           createdAt: { $first: "$createdAt" }
@@ -38,8 +38,6 @@ export const getDashboardStats = async (req, res) => {
         $group: {
           _id: null,
           totalRevenue: { $sum: "$saleTotal" },
-    
-          // To'langan (naqd + karta)
           totalPaid: {
             $sum: {
               $cond: [
@@ -49,24 +47,20 @@ export const getDashboardStats = async (req, res) => {
               ]
             }
           },
-    
-          // Qarz summasi (faqat qarz sotuvlarda qarz_miqdori ishlatiladi)
           totalDebt: {
             $sum: {
               $cond: [
                 { $in: ["$tolov_turi", ["qarz", "debt"]] },
-                { $ifNull: ["$qarz_miqdori", "$saleTotal"] }, // agar qarz_miqdori bo'lmasa, totalni olamiz
+                { $ifNull: ["$qarz_miqdori", "$saleTotal"] },
                 0
               ]
             }
           },
-    
           cashSales: {
             $sum: {
               $cond: [{ $in: ["$tolov_turi", ["naqd", "cash"]] }, "$saleTotal", 0]
             }
           },
-    
           cardSales: {
             $sum: {
               $cond: [
@@ -76,7 +70,6 @@ export const getDashboardStats = async (req, res) => {
               ]
             }
           },
-    
           debtSales: {
             $sum: {
               $cond: [{ $in: ["$tolov_turi", ["qarz", "debt"]] }, "$saleTotal", 0]
@@ -146,23 +139,64 @@ export const getDashboardStats = async (req, res) => {
     // ================== MAHSULOT STATISTIKASI ==================
     const totalProducts = await Product.countDocuments();
 
-    const productStats = await Product.aggregate([
+    // ✅ YANGI: Birlik bo'yicha (kg/dona/metr) alohida statistika
+    const productStatsByType = await Product.aggregate([
       {
         $group: {
-          _id: null,
+          _id: { $toLower: { $ifNull: ["$birligi", "dona"] } },
           totalValue: { $sum: { $multiply: ["$narxi", "$ombordagi_soni"] } },
           totalQuantity: { $sum: "$ombordagi_soni" },
+          count: { $sum: 1 },
           lowStock: { $sum: { $cond: [{ $lt: ["$ombordagi_soni", 10] }, 1, 0] } },
           outOfStock: { $sum: { $cond: [{ $eq: ["$ombordagi_soni", 0] }, 1, 0] } }
         }
       }
     ]);
 
-    const productInfo = productStats[0] || {
-      totalValue: 0,
-      totalQuantity: 0,
-      lowStock: 0,
-      outOfStock: 0
+    // Birlik bo'yicha ma'lumotlarni formatlash
+    const stockByType = {
+      kg: { totalQuantity: 0, totalValue: 0, count: 0, lowStock: 0, outOfStock: 0 },
+      dona: { totalQuantity: 0, totalValue: 0, count: 0, lowStock: 0, outOfStock: 0 },
+      metr: { totalQuantity: 0, totalValue: 0, count: 0, lowStock: 0, outOfStock: 0 }
+    };
+
+    let totalValue = 0;
+    let totalQuantity = 0;
+    let lowStock = 0;
+    let outOfStock = 0;
+
+    productStatsByType.forEach(item => {
+      const type = item._id;
+      if (stockByType[type]) {
+        stockByType[type] = {
+          totalQuantity: item.totalQuantity,
+          totalValue: item.totalValue,
+          count: item.count,
+          lowStock: item.lowStock,
+          outOfStock: item.outOfStock
+        };
+      } else {
+        // Agar yangi birlik bo'lsa, dinamik qo'shish
+        stockByType[type] = {
+          totalQuantity: item.totalQuantity,
+          totalValue: item.totalValue,
+          count: item.count,
+          lowStock: item.lowStock,
+          outOfStock: item.outOfStock
+        };
+      }
+      totalValue += item.totalValue;
+      totalQuantity += item.totalQuantity;
+      lowStock += item.lowStock;
+      outOfStock += item.outOfStock;
+    });
+
+    const productInfo = {
+      totalValue,
+      totalQuantity,
+      lowStock,
+      outOfStock,
+      byType: stockByType // ✅ YANGI: tur bo'yicha
     };
 
     const lowStockProducts = await Product.find({ ombordagi_soni: { $lt: 10, $gt: 0 } })
@@ -308,7 +342,7 @@ export const getDashboardStats = async (req, res) => {
     });
 
     // ================== FOYDA HISOBLASH ==================
-    const totalIncome = salesStats.totalPaid - returnStats.totalReturnValue; // To'langan puldan qaytarishlarni ayirish
+    const totalIncome = salesStats.totalPaid - returnStats.totalReturnValue;
     const totalExpense = expenseStats.totalExpenses;
     const netProfit = totalIncome - totalExpense;
     const profitMargin = totalIncome > 0 ? ((netProfit / totalIncome) * 100).toFixed(2) : 0;
@@ -333,6 +367,7 @@ export const getDashboardStats = async (req, res) => {
       },
       { $sort: { "_id.year": 1, "_id.month": 1 } }
     ]);
+
     // ================== JAVOB ==================
     res.status(200).json({
       success: true,
@@ -366,6 +401,8 @@ export const getDashboardStats = async (req, res) => {
           totalQuantity: productInfo.totalQuantity,
           lowStockCount: productInfo.lowStock,
           outOfStockCount: productInfo.outOfStock,
+          // ✅ YANGI: Birlik bo'yicha alohida ko'rsatish (kg, dona, metr, ...)
+          byUnit: productInfo.byType,
           lowStockProducts,
           outOfStockProducts
         },

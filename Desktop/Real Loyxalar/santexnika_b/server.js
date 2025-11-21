@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 5000;
 const HOST = "localhost";
 
 app.use(express.json());
-
+  
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
