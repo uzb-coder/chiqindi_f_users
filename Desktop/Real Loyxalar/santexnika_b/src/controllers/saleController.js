@@ -2,6 +2,7 @@ import Product from "../models/Product.js";
 import Sale from "../models/Sale.js";
 import Client from "../models/clientModel.js"; // Client modelini import qilish
 import DebtClient from "../models/DebtClientModel.js"; // qarz mijozlar bazasi
+
 export const calculateRealDebt = async (clientId) => {
   try {
     const sales = await Sale.find({
@@ -99,7 +100,7 @@ export const getSales = async (req, res) => {
         clientInfo = {
           _id: sale.client._id,
           ism: sale.client.ism ?? "Noma'lum",
-          tel: sale.client.tel ?? null,
+          tel: sale.client.tel ?? "941234567",
           manzil: sale.client.manzil ?? null,
           type: sale.tolov_turi === "qarz" ? "qarzdor" : "promo_mijoz",
           promo_kod: sale.tolov_turi !== "qarz" ? sale.client.promo_kod : null,
