@@ -39,18 +39,15 @@ export const getSales = async (req, res) => {
     const { from, to, clientId, tolov_turi } = req.query;
     const filter = {};
 
-    // Sana bo‘yicha filter
     if (from && to) {
       filter.createdAt = {
         $gte: new Date(from),
         $lte: new Date(to),
       };
     }
-
     if (clientId) filter.client = clientId;
     if (tolov_turi) filter.tolov_turi = tolov_turi;
 
-    // Sotuvlarni olish
     const sales = await Sale.find(filter)
       .populate({
         path: "products.product",
@@ -71,30 +68,37 @@ export const getSales = async (req, res) => {
       let saleHaqiqiy = 0;
       let saleDiscount = 0;
 
-      // Mahsulotlar bo‘yicha array
+      // getSales ichida, productsInfo map qismida:
       const productsInfo = sale.products.map((p) => {
         const finalPrice = p.finalPrice ?? p.narxi * p.miqdor;
-
-        saleHaqiqiy += finalPrice; // <-- finalPrice bo‘yicha jami summani hisoblaymiz
+        saleHaqiqiy += finalPrice;
         saleDiscount += p.discountAmount ?? 0;
 
         return {
           product: p.product,
           miqdor: p.miqdor,
-          narxi: p.narxi,
-          discountPercent: p.discountPercent,
-          discountAmount: p.discountAmount,
+          narxi: p.narxi,                    // bu endi custom narx (masalan 180000)
+          original_narxi: p.original_narxi,  // ombor narxi (150000)
+          discountPercent: p.discountPercent ?? 0,
+          discountAmount: p.discountAmount ?? 0,
           finalPrice,
         };
       });
 
       const tolandi = sale.total || 0;
-
       totalHaqiqiy += saleHaqiqiy;
       totalTolov += tolandi;
       totalDiscount += saleDiscount;
 
-      // CLIENT INFO
+      let clientType = "oddiy";
+      let isPromoUsed = sale.promoCode ? true : false;
+
+      if (sale.tolov_turi === "qarz") {
+        clientType = "qarzdor";
+      } else if (isPromoUsed) {
+        clientType = "promo_mijoz";
+      }
+
       let clientInfo = null;
       if (sale.client) {
         clientInfo = {
@@ -102,18 +106,17 @@ export const getSales = async (req, res) => {
           ism: sale.client.ism ?? "Noma'lum",
           tel: sale.client.tel ?? "941234567",
           manzil: sale.client.manzil ?? null,
-          type: sale.tolov_turi === "qarz" ? "qarzdor" : "promo_mijoz",
-          promo_kod: sale.tolov_turi !== "qarz" ? sale.client.promo_kod : null,
-          foiz: sale.tolov_turi !== "qarz" ? sale.client.foiz : 0,
+          type: clientType,
+          promo_kod: isPromoUsed ? sale.client.promo_kod : null,
+          foiz: isPromoUsed ? sale.client.foiz : 0,
         };
       }
 
-      // YAKUNIY OBYEKT
       processedSales.push({
         _id: sale._id,
         products: productsInfo,
         tolov_turi: sale.tolov_turi,
-        total: saleHaqiqiy, // <-- finalPrice bo‘yicha jami summani backendda yuboramiz
+        total: saleHaqiqiy,
         qarz_miqdori: sale.qarz_miqdori,
         client: clientInfo,
         promo: {
@@ -144,71 +147,101 @@ export const getSales = async (req, res) => {
   }
 };
 
-
-
 export const createSale = async (req, res) => {
   try {
     const { products, tolov_turi, clientId, clientInfo, promoCode } = req.body;
 
+    // Validatsiya
+    if (!products || products.length === 0) {
+      return res.status(400).json({ message: "Savatcha bo'sh!" });
+    }
+
     let totalToPay = 0;
     let qarzAmount = 0;
     let saleProducts = [];
-
     let usedClient = null;
     let clientModel = null;
 
+    // Promo mijozni aniqlash
+    if (promoCode) {
+      const promoClient = await Client.findOne({ promo_kod: promoCode });
+      if (promoClient) {
+        usedClient = promoClient;
+        clientModel = "Client";
+      }
+    }
+
+    // Har bir mahsulotni qayta ishlash
     for (let item of products) {
-      const { productId, miqdor } = item;
-      const product = await Product.findById(productId);
-      if (!product) return res.status(404).json({ message: `Mahsulot topilmadi: ${productId}` });
-      if (product.ombordagi_soni < miqdor)
-        return res.status(400).json({ message: `Omborda yetarli mahsulot yo‘q: ${productId}` });
+      const { productId, miqdor, narxi } = item; // narxi frontendan keladi
 
-      let basePrice = product.narxi * miqdor;
-      let discountPercent = 0;
-      let discountAmount = 0;
-      let finalPrice = basePrice;
-
-      if (promoCode) {
-        const promoClient = await Client.findOne({ promo_kod: promoCode });
-        if (promoClient && promoClient.foiz > 0) {
-          discountPercent = promoClient.foiz;
-          discountAmount = (basePrice * discountPercent) / 100;
-          finalPrice = basePrice - discountAmount;
-          usedClient = promoClient;
-          clientModel = "Client";
-        }
+      if (!productId || !miqdor || miqdor <= 0) {
+        return res.status(400).json({ message: "Mahsulot ma'lumotlari noto‘g‘ri" });
       }
 
-      // Ombor sonini kamaytirish
+      const product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({ message: `Mahsulot topilmadi: ${productId}` });
+      }
+
+      if (product.ombordagi_soni < miqdor) {
+        return res.status(400).json({
+          message: `Omborda yetarli emas: ${product.nomi} (bor: ${product.ombordagi_soni})`,
+        });
+      }
+
+      // Muhim: Foydalanuvchi o‘zgartirgan narxni ishlatamiz, aks holda ombor narxini
+      const usedPrice = (narxi && narxi > 0) ? narxi : product.narxi;
+
+      // Asl narxdan hisoblaymiz (chegirma uchun)
+      const basePriceFromOriginal = product.narxi * miqdor;
+      let discountPercent = 0;
+      let discountAmount = 0;
+      let finalPrice = usedPrice * miqdor; // bu haqiqiy to‘lov summasi
+
+      // Chegirma faqat promo mijoz bo‘lsa va foiz > 0 bo‘lsa
+      if (usedClient && usedClient.foiz > 0) {
+        discountPercent = usedClient.foiz;
+        discountAmount = (basePriceFromOriginal * discountPercent) / 100;
+        // Chegirmadan keyin final narxni qayta hisoblaymiz
+        finalPrice = (usedPrice * miqdor) - discountAmount;
+      }
+
+      // Ombor kamaytirish
       product.ombordagi_soni -= miqdor;
       await product.save();
 
+      // Sale ga saqlanadigan ma'lumot
       saleProducts.push({
         product: product._id,
         miqdor,
-        narxi: product.narxi,
+        narxi: usedPrice,                    // bu sotuvdagi real narx (custom bo‘lishi mumkin)
+        original_narxi: product.narxi,       // ombordagi asl narx (hisobot uchun)
         discountPercent,
         discountAmount,
-        finalPrice
+        finalPrice,                          // oxirgi to‘lov summasi (chegirma hisobda)
       });
 
-      totalToPay += tolov_turi === "naqd" ? finalPrice : 0;
-      qarzAmount += tolov_turi === "qarz" ? finalPrice : 0;
+      // To‘lov turiga qarab jami hisob
+      if (tolov_turi === "naqd" || tolov_turi === "karta") {
+        totalToPay += finalPrice;
+      } else if (tolov_turi === "qarz") {
+        qarzAmount += finalPrice;
+      }
     }
 
-    // Qarzdor clientni tekshirish / yaratish
+    // Qarzdor mijozni yaratish/aniqlash
     if (tolov_turi === "qarz") {
       if (clientId) {
         usedClient = await DebtClient.findById(clientId);
-        if (!usedClient) return res.status(404).json({ message: "Qarzdor mijoz topilmadi" });
+        if (!usedClient) return res.status(404).json({ message: "Qarzdor topilmadi" });
         clientModel = "DebtClient";
-      } else if (clientInfo && clientInfo.ism && clientInfo.tel) {
+      } else if (clientInfo?.ism && clientInfo?.tel) {
         usedClient = new DebtClient({
           ism: clientInfo.ism,
           tel: clientInfo.tel,
           manzil: clientInfo.manzil || "",
-          qarzlar: [{ miqdor: qarzAmount, createdAt: new Date() }]
+          qarzlar: [{ miqdor: qarzAmount, sale: null, createdAt: new Date() }],
         });
         await usedClient.save();
         clientModel = "DebtClient";
@@ -217,30 +250,34 @@ export const createSale = async (req, res) => {
       }
     }
 
+    // Sotuvni saqlash
     const sale = new Sale({
       products: saleProducts,
       tolov_turi,
-      total: totalToPay,
-      qarz_miqdori: qarzAmount,
+      total: totalToPay,           // naqd/karta uchun
+      qarz_miqdori: qarzAmount,    // qarz uchun
       client: usedClient?._id || null,
       clientModel,
-      promoCode: promoCode || null
+      promoCode: promoCode || null,
+      createdBy: req.user?._id || null, // agar auth bo‘lsa
     });
 
     await sale.save();
 
     res.status(201).json({
-      message: "Sotuv muvaffaqiyatli saqlandi",
+      success: true,
+      message: "Sotuv muvaffaqiyatli amalga oshirildi",
       sale,
-      client: usedClient
     });
-
   } catch (error) {
     console.error("createSale xatolik:", error);
-    res.status(500).json({ message: "Server xatosi", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server xatosi",
+      error: error.message,
+    });
   }
 };
-
 
 export const previewSale = async (req, res) => {
   try {
@@ -252,15 +289,11 @@ export const previewSale = async (req, res) => {
     let totalBeforeDiscount = 0;
     const detailedProducts = [];
 
-    // 🔹 Har bir mahsulot uchun narx * miqdor hisoblash
     for (const item of products) {
       const product = await Product.findById(item.productId);
       if (!product) {
-        return res
-          .status(404)
-          .json({ message: `Mahsulot topilmadi: ${item.productId}` });
+        return res.status(404).json({ message: `Mahsulot topilmadi: ${item.productId}` });
       }
-
       const price = product.narxi * item.miqdor;
       totalBeforeDiscount += price;
 
@@ -272,7 +305,6 @@ export const previewSale = async (req, res) => {
       });
     }
 
-    // 🔹 Promo kod bo‘lsa — mijozni topish va chegirma qo‘llash
     let discountPercent = 0;
     let discountAmount = 0;
     let totalAfterDiscount = totalBeforeDiscount;
@@ -288,7 +320,8 @@ export const previewSale = async (req, res) => {
           promo_kod: client.promo_kod,
         };
 
-        if (client.foiz) {
+        // Faqat foiz > 0 bo‘lsa chegirma qo‘llaymiz
+        if (client.foiz > 0) {
           discountPercent = client.foiz;
           discountAmount = (totalBeforeDiscount * discountPercent) / 100;
           totalAfterDiscount = totalBeforeDiscount - discountAmount;
@@ -296,7 +329,6 @@ export const previewSale = async (req, res) => {
       }
     }
 
-    // 🔹 Yakuniy javob
     res.json({
       total_before_discount: totalBeforeDiscount,
       discount_percent: discountPercent,
@@ -306,9 +338,7 @@ export const previewSale = async (req, res) => {
       products: detailedProducts,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Xatolik yuz berdi", error: error.message });
+    res.status(500).json({ message: "Xatolik yuz berdi", error: error.message });
   }
 };
 
@@ -363,7 +393,6 @@ export const getDebtClients = async (req, res) => {
     res.status(500).json({ message: "Xatolik", error: error.message });
   }
 };
-
 
 export const payDebt = async (req, res) => {
   try {
@@ -429,7 +458,6 @@ export const payDebt = async (req, res) => {
     res.status(500).json({ message: "Xatolik yuz berdi", error: error.message });
   }
 };
-
 
 export const getAllDebtClientsSimple = async (req, res) => {
   try {

@@ -243,6 +243,81 @@ export const getDashboardStats = async (req, res) => {
       { $limit: 10 }
     ]);
 
+    // ================== ENG FAOL MIJOZLAR (TOP BUYERS) ==================
+    const topActiveClients = await Sale.aggregate([
+      { $match: dateFilter },
+      { 
+        $match: { 
+          client: { $exists: true, $ne: null } 
+        } 
+      },
+      { $unwind: "$products" },
+      {
+        $group: {
+          _id: "$client",
+          totalPurchases: { $sum: "$products.finalPrice" },
+          purchaseCount: { $sum: 1 },
+          totalQuantity: { $sum: "$products.miqdor" },
+          lastPurchase: { $max: "$createdAt" }
+        }
+      },
+      { $sort: { totalPurchases: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: "clients",
+          localField: "_id",
+          foreignField: "_id",
+          as: "clientInfo"
+        }
+      },
+      { $unwind: { path: "$clientInfo", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "debtclients",
+          let: { clientTel: "$clientInfo.tel" },
+          pipeline: [
+            { 
+              $match: { 
+                $expr: { $eq: ["$tel", "$$clientTel"] } 
+              } 
+            },
+            {
+              $project: {
+                totalDebt: { $sum: "$qarzlar.miqdor" }
+              }
+            }
+          ],
+          as: "debtInfo"
+        }
+      },
+      {
+        $project: {
+          ism: { $ifNull: ["$clientInfo.ism", "Noma'lum Mijoz"] },
+          tel: { $ifNull: ["$clientInfo.tel", "N/A"] },
+          manzil: { $ifNull: ["$clientInfo.manzil", "N/A"] },
+          type: { $ifNull: ["$clientInfo.type", "regular"] },
+          foiz: { $ifNull: ["$clientInfo.foiz", 0] },
+          totalPurchases: 1,
+          purchaseCount: 1,
+          totalQuantity: 1,
+          lastPurchase: 1,
+          currentDebt: { 
+            $ifNull: [
+              { $arrayElemAt: ["$debtInfo.totalDebt", 0] }, 
+              0
+            ] 
+          },
+          averagePurchase: { 
+            $round: [
+              { $divide: ["$totalPurchases", "$purchaseCount"] }, 
+              2
+            ] 
+          }
+        }
+      }
+    ]);
+
     // ================== HARAJAT STATISTIKASI ==================
     const expenseData = await Expense.aggregate([
       { $match: dateFilter },
@@ -401,7 +476,6 @@ export const getDashboardStats = async (req, res) => {
           totalQuantity: productInfo.totalQuantity,
           lowStockCount: productInfo.lowStock,
           outOfStockCount: productInfo.outOfStock,
-          // ✅ YANGI: Birlik bo'yicha alohida ko'rsatish (kg, dona, metr, ...)
           byUnit: productInfo.byType,
           lowStockProducts,
           outOfStockProducts
@@ -411,7 +485,9 @@ export const getDashboardStats = async (req, res) => {
           totalDebtClients,
           clientsWithDebt: debtInfo.clientsWithDebt,
           totalDebtAmount: debtInfo.totalDebtAmount + salesStats.totalDebt,
-          topDebtors
+          topDebtors,
+          // ✅ YANGI: Eng faol mijozlar
+          topActiveClients
         },
         expenses: {
           total: expenseStats.totalExpenses,

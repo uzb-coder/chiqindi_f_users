@@ -7,6 +7,7 @@ const saleSchema = new mongoose.Schema(
         product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
         miqdor: { type: Number, required: true },
         narxi: { type: Number, required: true },
+        original_narxi: { type: Number, required: true },  // ombordagi asl narx (foyda uchun)
         discountPercent: { type: Number, default: 0 },
         discountAmount: { type: Number, default: 0 },
         finalPrice: { type: Number, required: true },
@@ -30,22 +31,20 @@ const saleSchema = new mongoose.Schema(
       enum: ["Client", "DebtClient"],
       default: null,
     },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // agar auth bo‘lsa
   },
   { timestamps: true, strictPopulate: false } // <-- populate xatolik bermasligi uchun
 );
 
 // Populate products va client
-saleSchema.pre(/^find/, function(next) {
+saleSchema.pre(/^find/, function (next) {
   this.populate({
     path: "products.product",
-    model: "Product"
-  });
-
-  this.populate({
+    select: "nomi narxi birligi ombordagi_soni",
+  }).populate({
     path: "client",
     select: "ism tel manzil foiz promo_kod",
   });
-
   next();
 });
 
