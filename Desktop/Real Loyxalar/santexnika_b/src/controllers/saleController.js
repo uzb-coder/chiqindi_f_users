@@ -434,7 +434,6 @@ export const payDebt = async (req, res) => {
       });
     }
 
-    // Haqiqiy qarzni hisoblaymiz
     const umumiy_qarz = await calculateRealDebt(clientId);
 
     // Client DB ni yangilaymiz
@@ -461,43 +460,101 @@ export const payDebt = async (req, res) => {
 
 export const getAllDebtClientsSimple = async (req, res) => {
   try {
+    // Barcha DebtClient larni olamiz
     const clients = await DebtClient.find().lean();
-    const clientsWithDebt = [];
+
+    const clientsWithDebtHistory = [];
 
     for (const client of clients) {
       const sales = await Sale.find({
         client: client._id,
         clientModel: "DebtClient",
         tolov_turi: "qarz",
-      }).lean();
+      })
+        .sort({ createdAt: 1 })
+        .lean();
+
+      // Agar hech qanday qarzga sotuv bo‘lmagan bo‘lsa — o‘tkazamiz
+      if (sales.length === 0) continue;
 
       let umumiyQarz = 0;
+      const qarzTarixi = [];
+      const tolovTarixi = [];
+
+      let birinchiQarzSana = null;
+      let oxirgiQarzSana = null;
 
       for (const sale of sales) {
-        const jami = sale.products.reduce((sum, p) => sum + p.finalPrice, 0);
-        const tolandi = sale.total || 0;
-        umumiyQarz += jami - tolandi;
+        const jami = sale.products.reduce((sum, p) => sum + (p.finalPrice || p.narxi * p.miqdor), 0);
+        const tolandi = Number(sale.total) || 0;
+        const qolganQarz = jami - tolandi;
+
+        umumiyQarz += qolganQarz;
+
+        // Birinchi va oxirgi qarz sanasini aniqlash
+        if (!birinchiQarzSana && jami > 0) {
+          birinchiQarzSana = sale.createdAt;
+        }
+        oxirgiQarzSana = sale.createdAt;
+
+        qarzTarixi.push({
+          saleId: sale._id,
+          sana: sale.createdAt,
+          jamiSumma: jami,
+          tolangan: tolandi,
+          qolganQarz,
+          status: qolganQarz > 0 ? "qarzda" : "to'langan",
+        });
+
+        if (tolandi > 0) {
+          tolovTarixi.push({
+            saleId: sale._id,
+            tolovSummasi: tolandi,
+            tolovSanasi: sale.updatedAt || sale.createdAt,
+            qarzOlinganSana: sale.createdAt,
+          });
+        }
       }
 
-      if (umumiyQarz > 0) {
-        clientsWithDebt.push({
-          id: client._id.toString(),
-          ism: client.ism,
-          tel: client.tel,
-          manzil: client.manzil || "",
-          umumiyQarz,
-        });
-      }
+      // Holatni aniqlash
+      const status = umumiyQarz > 0 ? "qarzdor" : "to'langan";
+
+      clientsWithDebtHistory.push({
+        id: client._id.toString(),
+        ism: client.ism,
+        tel: client.tel,
+        manzil: client.manzil || "Manzil kiritilmagan",
+        umumiyQarz: umumiyQarz > 0 ? umumiyQarz : 0,
+        status, // "qarzdor" yoki "to'langan"
+        birinchiQarzSana,     // ← Birinchi marta qachon qarzga olgani
+        oxirgiQarzSana,       // ← Oxirgi marta qachon qarzga olgani
+        qarzlarSoni: qarzTarixi.filter(q => q.qolganQarz > 0).length,
+        toliqTolanganlarSoni: qarzTarixi.filter(q => q.status === "to'langan").length,
+        jamiSotuvlarSoni: sales.length,
+        qarzTarixi,
+        tolovTarixi,
+      });
     }
 
+    // Umumiy qarz bo‘yicha saralash (avval qarzdorlar, keyin to‘langanlar)
+    const sorted = clientsWithDebtHistory.sort((a, b) => {
+      if (a.status === "qarzdor" && b.status === "to'langan") return -1;
+      if (a.status === "to'langan" && b.status === "qarzdor") return 1;
+      return b.umumiyQarz - a.umumiyQarz;
+    });
+
     res.json({
-      message: "Barcha qarzdor mijozlar ro'yxati",
-      total: clientsWithDebt.length,
-      clients: clientsWithDebt.sort((a, b) => b.umumiyQarz - a.umumiyQarz),
+      success: true,
+      message: "Barcha qarzga sotuv bo'lgan mijozlar (to'langanlar ham kiradi)",
+      total: sorted.length,
+      qarzdorlar_soni: sorted.filter(c => c.status === "qarzdor").length,
+      tolanganlar_soni: sorted.filter(c => c.status === "to'langan").length,
+      clients: sorted,
     });
   } catch (error) {
     console.error("getAllDebtClientsSimple xatolik:", error);
     res.status(500).json({
+      success: false,
       message: "Xatolik yuz berdi",
       error: error.message,
     });
