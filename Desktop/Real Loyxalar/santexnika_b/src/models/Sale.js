@@ -7,7 +7,7 @@ const saleSchema = new mongoose.Schema(
         product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
         miqdor: { type: Number, required: true },
         narxi: { type: Number, required: true },
-        original_narxi: { type: Number, required: true },  // ombordagi asl narx (foyda uchun)
+        original_narxi: { type: Number, required: false },  // ombordagi asl narx (foyda uchun)
         discountPercent: { type: Number, default: 0 },
         discountAmount: { type: Number, default: 0 },
         finalPrice: { type: Number, required: true },
