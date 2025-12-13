@@ -11,7 +11,6 @@ import expenseRoutes from "./src/routes/expenseRoutes.js";
 import dashboardRoutes from "./src/routes/dashboardRoutes.js";
 import invoiceRoutes from "./src/routes/invoiceRoutes.js";
 
-
 dotenv.config();
 
 const app = express();

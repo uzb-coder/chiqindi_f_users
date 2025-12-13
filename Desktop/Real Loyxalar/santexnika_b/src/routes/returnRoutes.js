@@ -1,16 +1,28 @@
+// routes/return.js
 import express from "express";
-import { createReturn, getReturnStats,confirmReturn, getReturns,getConfirmedReturns } from "../controllers/returnController.js";
+import {
+  createReturn,
+  getReturns,
+  getConfirmedReturns,
+  confirmReturn,
+  getReturnStats,
+} from "../controllers/returnController.js";
 
 const router = express.Router();
 
-router.get("/all", getReturns);
+// Pending qaytarishlar (admin ko‘radi)
+router.get("/pending", getReturns);
 
-router.post("/create", createReturn);
-
-router.put("/confirm", confirmReturn);
-
+// Tasdiqlanganlar
 router.get("/confirmed", getConfirmedReturns);
 
-router.get("/returns/stats", getReturnStats);
+// Yangi qaytarish yaratish
+router.post("/create", createReturn);
+
+// Bir nechta qaytarishni tasdiqlash
+router.put("/confirm", confirmReturn);
+
+// Statistika
+router.get("/stats", getReturnStats);
 
 export default router;

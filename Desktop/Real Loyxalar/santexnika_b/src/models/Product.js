@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const ProductSchema = new mongoose.Schema({
   nomi: { type: String, required: true },
+  tannarxi: { type: Number, required: false },
   narxi: { type: Number, required: true },
   valyuta: { type: String, default: "UZS" },
   birligi: { type: String, required: true },

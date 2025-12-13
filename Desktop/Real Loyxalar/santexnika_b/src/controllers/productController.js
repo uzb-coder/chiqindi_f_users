@@ -1,28 +1,64 @@
 import Product from "../models/Product.js";
 import ProductHistory from "../models/ProductHistoryModel.js";
 
-// 🔹 Mahsulotlarni olish
 export const getProducts = async (req, res) => {
   try {
-    const products = await Product.find();
+    let page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const search = req.query.search?.trim() || "";
 
-    // Valyutani har doim qo‘shib berish
-    const populatedProducts = products.map(p => ({
-      ...p.toObject(),
-      valyuta: p.valyuta || "UZS",
-    }));
+    let filter = {};
 
-    res.json(populatedProducts);
-  } catch (error) {
-    console.error("❌ Mahsulotlarni olishda xato:", error);
-    res.status(500).json({ message: "Server xatosi", error: error.message });
+    if (search) {
+      filter = {
+        $or: [
+          { nomi: { $regex: search, $options: "i" } },
+          { birligi: { $regex: search, $options: "i" } },
+          { valyuta: { $regex: search, $options: "i" } },
+
+          // Son bo‘lsa raqam bo‘yicha qidirish
+          ...(Number(search)
+            ? [
+                { narxi: Number(search) },
+                { tannarxi: Number(search) }
+              ]
+            : [])
+        ]
+      };
+    }
+
+    const total = await Product.countDocuments(filter);
+    const totalPages = Math.ceil(total / limit);
+
+    if (page > totalPages && totalPages > 0) {
+      page = totalPages;
+    }
+
+    const skip = (page - 1) * limit;
+
+    const products = await Product.find(filter)
+      .skip(skip)
+      .limit(limit);
+
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages,
+      products,
+    });
+
+  } catch (err) {
+    console.log("❌ Error:", err);
+    res.status(500).json({ message: "Server xatosi" });
   }
 };
+
 
 // 🔹 Mahsulot yaratish
 export const createProduct = async (req, res) => {
   try {
-    const { nomi, valyuta, narxi, birligi, ombordagi_soni } = req.body;
+    const { nomi, valyuta, narxi, birligi, ombordagi_soni,tannarxi } = req.body;
 
     const product = await Product.create({
       nomi,
@@ -30,6 +66,7 @@ export const createProduct = async (req, res) => {
       narxi,
       birligi,
       ombordagi_soni,
+      tannarxi
     });
 
     res.status(201).json({
@@ -69,7 +106,7 @@ export const deleteProduct = async (req, res) => {
 export const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nomi, narxi, birligi, qoshilgan_soni, valyuta } = req.body;
+    const { nomi, narxi, birligi, qoshilgan_soni, valyuta,tannarxi } = req.body;
 
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Mahsulot topilmadi" });
@@ -84,6 +121,7 @@ export const updateProduct = async (req, res) => {
     if (narxi) product.narxi = narxi;
     if (birligi) product.birligi = birligi;
     if (valyuta) product.valyuta = valyuta;
+    if (valyuta) product.tannarxi= tannarxi;
 
     await product.save();
 
