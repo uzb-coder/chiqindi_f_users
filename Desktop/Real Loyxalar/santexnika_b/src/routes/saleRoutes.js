@@ -4,7 +4,6 @@ import { createSale, previewSale, getSales, payDebt, getDebtClients, getAllDebtC
 const router = express.Router();
 
 router.get("/", getSales);
-
 router.post("/create", createSale);
 
 router.post("/preview", previewSale);

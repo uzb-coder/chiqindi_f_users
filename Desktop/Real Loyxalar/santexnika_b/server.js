@@ -10,6 +10,8 @@ import { protect } from "./src/middleware/authMiddleware.js";
 import expenseRoutes from "./src/routes/expenseRoutes.js";
 import dashboardRoutes from "./src/routes/dashboardRoutes.js";
 import invoiceRoutes from "./src/routes/invoiceRoutes.js";
+import  debtRoutes  from "./src/routes/debtRoutes.js";
+
 
 dotenv.config();
 
@@ -42,6 +44,8 @@ app.use("/api/sales", protect, saleRoutes);
 app.use("/api/clients", protect, clientRoutes);
 
 app.use("/api/expenses", expenseRoutes);
+
+app.use("/api/debt", debtRoutes); 
 
 app.use("/api/users", userRoutes);
 
